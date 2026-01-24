@@ -4,6 +4,8 @@ A fast, terminal‑native note‑taking application written in Python using `cur
 
 QSNotes is designed to feel like a minimal and light TUI: terminal colors, keyboard‑only workflow, instant preview.
 
+<img width="600" height="600" alt="image" src="https://github.com/user-attachments/assets/2dbd0fc9-9b17-420c-bca3-9dceadafa3ca" />
+
 ---
 
 ## ✨ Features
