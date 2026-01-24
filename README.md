@@ -1,4 +1,4 @@
-# QSNotes (Quick & Simple Notesm TUI)
+# QSNotes (Quick & Simple Notes TUI)
 
 A fast, terminal‑native note‑taking application written in Python using `curses`.
 
