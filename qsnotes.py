@@ -295,7 +295,12 @@ class QSNotes:
                 msg = f"No notes found for '{self.search_term}'"
             msg_x = (width - len(msg)) // 2
             self.stdscr.addstr(6, msg_x, msg, curses.color_pair(3))
-        
+        if self.show_search:
+            curses.curs_set(1)
+            self.stdscr.move(3, 12 + len(self.search_term))
+        else:
+            curses.curs_set(0)
+            
         self.stdscr.noutrefresh()
         curses.doupdate()
     
@@ -394,7 +399,14 @@ class QSNotes:
         self.stdscr.noutrefresh()
         curses.doupdate()
 
-    
+    def clamp_selection(self, notes):
+        if not notes:
+            self.selected_index = 0
+        else:
+            self.selected_index = max(
+                0, min(self.selected_index, len(notes) - 1)
+            )
+
     def check_save_key(self, key: int) -> bool:
         """Check if key is a save key combination. Returns True if save should occur."""
         # Try multiple save key combinations
@@ -407,9 +419,25 @@ class QSNotes:
     
     def handle_list_mode(self, key: int) -> bool:
         if self.show_search:
+            if self.show_search:
+                notes = self.note_manager.search_notes(self.search_term)
+
+                if key in (curses.KEY_UP, curses.KEY_DOWN):
+                    if notes:
+                        if key == curses.KEY_UP:
+                            self.selected_index = (self.selected_index - 1) % len(notes)
+                        else:
+                            self.selected_index = (self.selected_index + 1) % len(notes)
+                        self.preview_scroll = 0
+                        self.draw_list_view()
+                    return True
             if key in (curses.KEY_BACKSPACE, 127):
                 self.search_term = self.search_term[:-1]
+                notes = self.note_manager.search_notes(self.search_term)
+                self.clamp_selection(notes)
+                self.preview_scroll = 0
                 self.draw_list_view()
+
             elif key == 27:  # Esc
                 self.show_search = False
                 self.search_term = ""
@@ -439,7 +467,11 @@ class QSNotes:
                     self.draw_edit_view()
             elif 32 <= key <= 126:
                 self.search_term += chr(key)
+                notes = self.note_manager.search_notes(self.search_term)
+                self.selected_index = 0  # 👈 optional but feels great UX-wise
+                self.preview_scroll = 0
                 self.draw_list_view()
+
             return True
         #Handle keys in list mode. Returns True if should continue, False if quit.
         if key == ord('q'):
@@ -454,11 +486,14 @@ class QSNotes:
             self.body_cursor_row = 0
             self.body_cursor_col = 0
             self.draw_edit_view()
+        
         elif key == ord('/'):
-            self.show_search = not self.show_search
-            if not self.show_search:
-                self.search_term = ""
+            self.show_search = True
+            self.search_term = ""
+            self.selected_index = 0
+            self.preview_scroll = 0
             self.draw_list_view()
+
         elif key == 10:  # Enter
             notes = self.note_manager.search_notes(self.search_term)
             sorted_notes = sorted(notes, key=lambda x: x.id)
@@ -518,6 +553,11 @@ class QSNotes:
             elif 32 <= key <= 126:  # Printable ASCII
                 self.search_term += chr(key)
                 self.draw_list_view()
+            
+            self.selected_index = min(
+                self.selected_index,
+                len(self.note_manager.notes) - 1
+            )
             self.preview_scroll = 0
 
         return True
