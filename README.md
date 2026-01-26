@@ -94,7 +94,7 @@ Notes are stored locally in `notes.json` (created automatically).
 |---|---|
 | `Tab` | Switch between title and body |
 | `Ctrl+W` | Save |
-| `Ctrl+O | Save & Exit |
+| `Ctrl+O` | Save & Exit |
 | `Esc` | Cancel and return to list |
 | Arrow keys | Move cursor |
 
