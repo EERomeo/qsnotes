@@ -171,6 +171,10 @@ class QSNotes:
         curses.init_pair(7, curses.COLOR_YELLOW, -1)    #
         curses.init_pair(8, curses.COLOR_MAGENTA, -1)   #
     
+    def get_sorted_notes(self):
+        notes = self.note_manager.search_notes(self.search_term)
+        return sorted(notes, key=lambda x: x.id, reverse=True)
+
     def draw_box(self, y: int, x: int, height: int, width: int, title: str = "", color_pair: int = 0) -> None:
         # Top border
         self.stdscr.attron(curses.color_pair(color_pair))
@@ -203,13 +207,13 @@ class QSNotes:
         height, width = self.stdscr.getmaxyx()
         
         # Main box
-        self.draw_box(1, 2, height - 5, width - 4, " QSNotes ", 3)
+        self.draw_box(1, 2, height - 4, width - 4, " QSNotes ", 3)
         
         # Command hints box at bottom
-        self.draw_box(height - 4, 2, 4, width - 4, "", 5)
+        self.draw_box(height - 3, 2, 3, width - 4, "", 5)
         hints = "n:New  Enter:Edit  d:Delete  /:Search  q:Quit"
         hints_x = (width - len(hints)) // 2
-        self.stdscr.addstr(height - 3, hints_x, hints, curses.color_pair(3))
+        self.stdscr.addstr(height - 2, hints_x, hints, curses.color_pair(3))
         
         # Search bar if active
         if self.show_search:
@@ -222,8 +226,7 @@ class QSNotes:
             curses.curs_set(0)  # Hide cursor
         
         # Notes list
-        notes = self.note_manager.search_notes(self.search_term)
-        sorted_notes = sorted(notes, key=lambda x: x.id)
+        sorted_notes = self.get_sorted_notes()
         
         # Calculate display
         self.notes_per_page = self.LIST_VISIBLE_COUNT
@@ -238,7 +241,9 @@ class QSNotes:
         self.stdscr.hline(5, 4, curses.ACS_HLINE, width - 8)
         
         # Notes
-        for i, note in enumerate(sorted_notes[start_index:start_index + self.notes_per_page]):
+        for i, note in enumerate(
+            sorted_notes[start_index:start_index + self.notes_per_page]
+        ):
             y = 6 + i
             is_selected = (i + start_index) == self.selected_index
             
@@ -272,7 +277,7 @@ class QSNotes:
                         for i in range(0, len(line), max_width):
                             preview_lines.append(line[i:i + max_width])
             preview_top = preview_separator_y + 1
-            preview_bottom = height - 6
+            preview_bottom = height - 4
             preview_height = preview_bottom - preview_top
 
             max_scroll = max(0, len(preview_lines) - preview_height)
@@ -310,16 +315,16 @@ class QSNotes:
 
         # Layout constants
         body_top = 7
-        body_bottom = height - 6
+        body_bottom = height - 4
         max_body_lines = body_bottom - body_top
         max_line_width = width - 8
 
         # Main boxes
-        self.draw_box(1, 2, height - 5, width - 4, " QNotes ", 3)
-        self.draw_box(height - 4, 2, 4, width - 4, "", 5)
+        self.draw_box(1, 2, height - 4, width - 4, " QNotes ", 3)
+        self.draw_box(height - 3, 2, 3, width - 4, "", 5)
 
-        hints = "Tab:Switch  Alt+S/Ctrl+W:Save  Esc:Cancel/Exit"
-        self.stdscr.addstr(height - 3, (width - len(hints)) // 2, hints, curses.color_pair(3))
+        hints = "Tab:Switch Ctrl+W:Save Ctrl+O:Save&Exit Esc:Cancel&Back"
+        self.stdscr.addstr(height - 2, (width - len(hints)) // 2, hints, curses.color_pair(3))
 
         # ----- TITLE -----
         self.stdscr.addstr(3, 4, "Title:", curses.color_pair(1))
@@ -412,7 +417,7 @@ class QSNotes:
         # Try multiple save key combinations
         save_keys = [
             23,    # Ctrl+W (ASCII 23)
-            15,    # Ctrl+O (ASCII 15)
+            #15,    # Ctrl+O (ASCII 15)
         ]
         
         return key in save_keys
@@ -444,7 +449,7 @@ class QSNotes:
                 self.draw_list_view()
             elif key == 10:  # Enter
                 notes = self.note_manager.search_notes(self.search_term)
-                sorted_notes = sorted(notes, key=lambda x: x.id)
+                sorted_notes = self.get_sorted_notes()
                 if 0 <= self.selected_index < len(sorted_notes):
                     note = sorted_notes[self.selected_index]
                     self.mode = "edit"
@@ -479,9 +484,9 @@ class QSNotes:
         elif key == ord('n'):
             self.mode = "new"
             self.current_note_id = None
-            self.editing_title = ""
+            self.editing_title = datetime.now().strftime("%H:%M")
             self.editing_body = ""
-            self.current_field = "title"
+            self.current_field = "body"
             self.cursor_pos = 0
             self.body_cursor_row = 0
             self.body_cursor_col = 0
@@ -496,7 +501,7 @@ class QSNotes:
 
         elif key == 10:  # Enter
             notes = self.note_manager.search_notes(self.search_term)
-            sorted_notes = sorted(notes, key=lambda x: x.id)
+            sorted_notes = self.get_sorted_notes()
             if 0 <= self.selected_index < len(sorted_notes):
                 note = sorted_notes[self.selected_index]
                 self.mode = "edit"
@@ -519,7 +524,7 @@ class QSNotes:
                 self.draw_edit_view()
         elif key == ord('d'):
             notes = self.note_manager.search_notes(self.search_term)
-            sorted_notes = sorted(notes, key=lambda x: x.id)
+            sorted_notes = self.get_sorted_notes()
             if 0 <= self.selected_index < len(sorted_notes):
                 note = sorted_notes[self.selected_index]
                 self.note_manager.delete_note(note.id)
@@ -569,7 +574,24 @@ class QSNotes:
             # DON'T reset selected_index = 0, keep the last selection
             self.draw_list_view()
             return
-        
+
+        # Ctrl+O - Save and exit app
+        if key == 15:  # Ctrl+O
+            if self.editing_title.strip() or self.editing_body.strip():
+                if self.current_note_id:
+                    self.note_manager.update_note(
+                        self.current_note_id,
+                        self.editing_title,
+                        self.editing_body
+                    )
+                else:
+                    self.note_manager.add_note(
+                        self.editing_title,
+                        self.editing_body
+                    )
+            curses.endwin()
+            raise SystemExit
+
         # Check for save keys
         if self.check_save_key(key):
             if self.editing_title.strip() or self.editing_body.strip():
@@ -587,6 +609,7 @@ class QSNotes:
                         self.editing_title, 
                         self.editing_body
                     )
+
                     # Find the index of the new note
                     notes = self.note_manager.search_notes(self.search_term)
                     sorted_notes = sorted(notes, key=lambda x: x.id)
@@ -763,7 +786,7 @@ class QSNotes:
             if self.body_cursor_row < len(body_lines):
                 self.body_cursor_col = len(body_lines[self.body_cursor_row])
             self.draw_edit_view()
-        
+
         elif 32 <= key <= 126:
             # Insert character at cursor position
             new_line = current_line[:self.body_cursor_col] + chr(key) + current_line[self.body_cursor_col:]
