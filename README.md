@@ -140,9 +140,19 @@ README.md
 
 ---
 
-## 📁 Customizing
+## 🔧 Customizing
 
+You can change some of the behaviour to better suit your workflow.
+Here are some hints:
 - On line 178 you can chage the sorting behaviour as well as what the sorting works on. Changing x.id to x.created_at or x.updated_at will sort on the creation or last updated date. Change reverse=True to reverse=False to sort ascending or descending. Default sort is on note id.
+- Changing line 489 will change the default title on new note. Default is current time, if you want a blank field change it to
+```python
+self.editing_title = ""
+```
+- For speed of operation the cursor defaults to the body field on new note creation. If you want it to go in the title field modify line 491 to read
+```python
+self.current_field = "title"
+```
 
 ---
 
