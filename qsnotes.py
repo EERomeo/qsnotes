@@ -3,11 +3,14 @@
 QSNotes - Quick & Simple Notes TUI
 https://github.com/EERomeo/qsnotes
 """
+__version__ = "1.1.0"
 
 import json
 import curses
 import sys
 import os
+import time
+import argparse
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -88,19 +91,31 @@ class NoteManager:
         with open(self.file_path, "w") as f:
             json.dump(data, f, indent=2)
     
-    def add_note(self, title: str, body: str) -> Note:
+    def add_note(self, body: str) -> Note:
+        """Add a new note, extracting title from first line of body"""
+        title = self._extract_title_from_body(body)
         note = Note(title, body)
         self.notes.append(note)
         self.save_notes()
         return note
     
-    def update_note(self, note_id: int, title: str, body: str) -> bool:
+    def update_note(self, note_id: int, body: str) -> bool:
+        """Update a note, extracting title from first line of body"""
         for note in self.notes:
             if note.id == note_id:
+                title = self._extract_title_from_body(body)
                 note.update(title, body)
                 self.save_notes()
                 return True
         return False
+    
+    def _extract_title_from_body(self, body: str) -> str:
+        """Extract title from the first non-empty line of body"""
+        lines = body.strip().split('\n')
+        for line in lines:
+            if line.strip():  # First non-empty line
+                return line.strip()[:50]  # Limit title length
+        return "Untitled"  # Default if body is empty
     
     def delete_note(self, note_id: int) -> bool:
         self.notes = [note for note in self.notes if note.id != note_id]
@@ -122,27 +137,28 @@ class NoteManager:
         
         for note in self.notes:
             if (search_lower in note.title.lower() or 
-                search_lower in note.body.lower()):
+                search_lower in note.body.lower() or
+                search_lower in note.created_at or
+                search_lower in note.updated_at):
                 results.append(note)
         
         return results
 
+
 class QSNotes:
     """Terminal TUI using curses"""
     
-    def __init__(self, stdscr):
+    def __init__(self, stdscr, initial_mode="list", initial_body=""):
         self.stdscr = stdscr
         self.note_manager = NoteManager()
         self.current_note_id: Optional[int] = None
         self.search_term = ""
         self.selected_index = 0
         self.last_selected_index = 0  # track last selection
-        self.mode = "list"  # "list", "edit", "new"
-        self.editing_title = ""
-        self.editing_body = ""
+        self.mode = initial_mode  # "list", "edit", or "new"
+        self.editing_body = initial_body  # Pre-fill body if provided
         self.show_search = False
         self.notes_per_page = 0
-        self.current_field = "title"  # "title" or "body"
         self.cursor_pos = 0  # Cursor position in current field
         self.body_cursor_row = 0  # Current row in body (for multiline)
         self.body_cursor_col = 0  # Current column in body
@@ -150,8 +166,15 @@ class QSNotes:
         self._last_width = 0
         self.body_scroll = 0
         self.preview_scroll = 0
+        self.list_body_scroll = 0  # Scroll position for body in list view
         self.LIST_VISIBLE_COUNT = 5
-        
+
+        # If starting in new mode with pre-filled body, set cursor at the end
+        if self.mode == "new" and self.editing_body:
+            body_lines = self.editing_body.split("\n")
+            self.body_cursor_row = len(body_lines) - 1
+            self.body_cursor_col = len(body_lines[-1])
+
         # Initialize curses
         curses.curs_set(0)  # Hide cursor
         self.stdscr.nodelay(0)  # Blocking input
@@ -163,65 +186,102 @@ class QSNotes:
         
         # Create color pairs
         curses.init_pair(1, curses.COLOR_BLUE, -1)      #
-        curses.init_pair(2, curses.COLOR_WHITE, -1)     #  
+        curses.init_pair(2, curses.COLOR_WHITE, -1)     #
         curses.init_pair(3, curses.COLOR_CYAN, -1)      #
         curses.init_pair(4, -1, curses.COLOR_BLUE)      #
         curses.init_pair(5, curses.COLOR_GREEN, -1)     #
         curses.init_pair(6, curses.COLOR_RED, -1)       #
         curses.init_pair(7, curses.COLOR_YELLOW, -1)    #
         curses.init_pair(8, curses.COLOR_MAGENTA, -1)   #
+        
+        # Add a small delay to ensure terminal is ready
+        time.sleep(0.1)
     
     def get_sorted_notes(self):
         notes = self.note_manager.search_notes(self.search_term)
         return sorted(notes, key=lambda x: x.id, reverse=True)
 
     def draw_box(self, y: int, x: int, height: int, width: int, title: str = "", color_pair: int = 0) -> None:
+        # Safety check - don't draw if coordinates are out of bounds
+        max_y, max_x = self.stdscr.getmaxyx()
+        
+        # Ensure we're not drawing outside the screen
+        if y < 0 or x < 0 or y + height > max_y or x + width > max_x:
+            return
+            
         # Top border
-        self.stdscr.attron(curses.color_pair(color_pair))
-        self.stdscr.addch(y, x, curses.ACS_ULCORNER)
-        self.stdscr.hline(y, x + 1, curses.ACS_HLINE, width - 2)
-        self.stdscr.addch(y, x + width - 1, curses.ACS_URCORNER)
-        
-        # Title if provided
-        if title:
-            title_x = x + 2
-            if color_pair:
-                self.stdscr.attron(curses.color_pair(color_pair))
-            self.stdscr.addstr(y, title_x, title)
-            if color_pair:
-                self.stdscr.attroff(curses.color_pair(color_pair))
-        
-        # Sides
-        self.stdscr.attron(curses.color_pair(color_pair))
-        for row in range(y + 1, y + height - 1):
-            self.stdscr.addch(row, x, curses.ACS_VLINE)
-            self.stdscr.addch(row, x + width - 1, curses.ACS_VLINE)
-        
-        # Bottom border
-        self.stdscr.addch(y + height - 1, x, curses.ACS_LLCORNER)
-        self.stdscr.hline(y + height - 1, x + 1, curses.ACS_HLINE, width - 2)
-        self.stdscr.addch(y + height - 1, x + width - 1, curses.ACS_LRCORNER)
+        try:
+            self.stdscr.attron(curses.color_pair(color_pair))
+            self.stdscr.addch(y, x, curses.ACS_ULCORNER)
+            self.stdscr.hline(y, x + 1, curses.ACS_HLINE, width - 2)
+            self.stdscr.addch(y, x + width - 1, curses.ACS_URCORNER)
+            
+            # Title if provided
+            if title and len(title) < width - 4:
+                title_x = x + 2
+                if color_pair:
+                    self.stdscr.attron(curses.color_pair(color_pair))
+                self.stdscr.addstr(y, title_x, title)
+                if color_pair:
+                    self.stdscr.attroff(curses.color_pair(color_pair))
+            
+            # Sides
+            self.stdscr.attron(curses.color_pair(color_pair))
+            for row in range(y + 1, y + height - 1):
+                if row < max_y:
+                    self.stdscr.addch(row, x, curses.ACS_VLINE)
+                    self.stdscr.addch(row, x + width - 1, curses.ACS_VLINE)
+            
+            # Bottom border
+            if y + height - 1 < max_y:
+                self.stdscr.addch(y + height - 1, x, curses.ACS_LLCORNER)
+                self.stdscr.hline(y + height - 1, x + 1, curses.ACS_HLINE, width - 2)
+                self.stdscr.addch(y + height - 1, x + width - 1, curses.ACS_LRCORNER)
+        except curses.error:
+            # Ignore curses errors when drawing at screen edges
+            pass
+    
+    def safe_addstr(self, y: int, x: int, text: str, attr=0) -> None:
+        """Safely add a string at the given coordinates, truncating if necessary"""
+        try:
+            max_y, max_x = self.stdscr.getmaxyx()
+            if y >= 0 and y < max_y and x >= 0 and x < max_x:
+                # Truncate text if it would go beyond screen width
+                available_width = max_x - x
+                if len(text) > available_width:
+                    text = text[:available_width]
+                self.stdscr.addstr(y, x, text, attr)
+        except curses.error:
+            # Ignore curses errors when writing at screen edges
+            pass
     
     def draw_list_view(self) -> None:
         self.stdscr.erase()
         height, width = self.stdscr.getmaxyx()
+        
+        # Ensure minimum terminal size
+        if height < 15 or width < 60:
+            self.safe_addstr(0, 0, "Terminal too small. Please resize.", curses.color_pair(6))
+            self.stdscr.noutrefresh()
+            curses.doupdate()
+            return
         
         # Main box
         self.draw_box(1, 2, height - 4, width - 4, " QSNotes ", 3)
         
         # Command hints box at bottom
         self.draw_box(height - 3, 2, 3, width - 4, "", 5)
-        hints = "n:New  Enter:Edit  d:Delete  /:Search  q:Quit"
+        hints = "n:New  Enter:Edit  d:Del  /:Search  q:Quit  j/k:Scrl"
         hints_x = (width - len(hints)) // 2
-        self.stdscr.addstr(height - 2, hints_x, hints, curses.color_pair(3))
+        self.safe_addstr(height - 2, hints_x, hints, curses.color_pair(3))
         
         # Search bar if active
         if self.show_search:
             search_text = f"Search: {self.search_term}"
-            self.stdscr.addstr(3, 4, "Search: ", curses.color_pair(1))
-            self.stdscr.addstr(3, 12, self.search_term, curses.color_pair(2))
+            self.safe_addstr(3, 4, "Search: ", curses.color_pair(1))
+            self.safe_addstr(3, 12, self.search_term, curses.color_pair(2))
             curses.curs_set(1)  # Show cursor for input
-            self.stdscr.move(3, 12 + len(self.search_term))
+            self.stdscr.move(3, min(12 + len(self.search_term), width - 5))
         else:
             curses.curs_set(0)  # Hide cursor
         
@@ -236,9 +296,12 @@ class QSNotes:
                 start_index = self.selected_index - self.notes_per_page + 1
         
         # Header
-        header = "Title                            Created      Updated"
-        self.stdscr.addstr(4, 4, header, curses.color_pair(1))
-        self.stdscr.hline(5, 4, curses.ACS_HLINE, width - 8)
+        header = "Title                            Created     Updated"
+        self.safe_addstr(4, 4, header, curses.color_pair(1))
+        try:
+            self.stdscr.hline(5, 4, curses.ACS_HLINE, min(width - 8, len(header) + 4))
+        except curses.error:
+            pass
         
         # Notes
         for i, note in enumerate(
@@ -249,49 +312,69 @@ class QSNotes:
             
             # Format data
             title = (note.title[:27] + "...") if len(note.title) > 27 else note.title.ljust(30)
-            title = title or "(Untitled)"
             created = datetime.fromisoformat(note.created_at).strftime("%Y-%m-%d")
             updated = datetime.fromisoformat(note.updated_at).strftime("%Y-%m-%d")
             
             # Draw
-            line = f"{title:30}  {created:10}  {updated:10}"
+            line = f"{title:28}  {created:10}  {updated:10}"
             if is_selected:
-                self.stdscr.addstr(y, 4, line, curses.color_pair(4))
+                self.safe_addstr(y, 4, line, curses.color_pair(4))
             else:
-                self.stdscr.addstr(y, 4, line, curses.color_pair(2))
+                self.safe_addstr(y, 4, line, curses.color_pair(2))
 
-            preview_separator_y = 6 + self.LIST_VISIBLE_COUNT
+        preview_separator_y = 6 + self.LIST_VISIBLE_COUNT
+        try:
             self.stdscr.hline(preview_separator_y, 4, curses.ACS_HLINE, width - 8)
+        except curses.error:
+            pass
 
-            selected_note = None
-            if 0 <= self.selected_index < len(sorted_notes):
-                selected_note = sorted_notes[self.selected_index]
-            preview_lines = []
-            max_width = width - 8
+        # Draw scrollable body preview
+        selected_note = None
+        if 0 <= self.selected_index < len(sorted_notes):
+            selected_note = sorted_notes[self.selected_index]
+        
+        preview_lines = []
+        max_width = width - 8
 
-            if selected_note:
-                for line in selected_note.body.split("\n"):
-                    if line == "":
-                        preview_lines.append("")
-                    else:
-                        for i in range(0, len(line), max_width):
-                            preview_lines.append(line[i:i + max_width])
-            preview_top = preview_separator_y + 1
-            preview_bottom = height - 4
-            preview_height = preview_bottom - preview_top
+        if selected_note:
+            # Split body into lines and wrap them
+            for line in selected_note.body.split("\n"):
+                if line == "":
+                    preview_lines.append("")
+                else:
+                    for i in range(0, len(line), max_width):
+                        preview_lines.append(line[i:i + max_width])
+        
+        preview_top = preview_separator_y + 1
+        preview_bottom = height - 4
+        preview_height = preview_bottom - preview_top
 
-            max_scroll = max(0, len(preview_lines) - preview_height)
-            self.preview_scroll = max(0, min(self.preview_scroll, max_scroll))
-            for i in range(preview_height):
-                idx = self.preview_scroll + i
-                if idx >= len(preview_lines):
-                    break
-                self.stdscr.addstr(
-                    preview_top + i,
-                    4,
-                    preview_lines[idx],
-                    curses.color_pair(3)
-                )
+        # Handle scrolling in preview
+        max_scroll = max(0, len(preview_lines) - preview_height)
+        self.list_body_scroll = max(0, min(self.list_body_scroll, max_scroll))
+        
+        # Draw scroll indicator if needed
+        if max_scroll > 0:
+            scroll_percent = int((self.list_body_scroll / max_scroll) * 100)
+            scroll_text = f" [Scroll: {scroll_percent}%]"
+            self.safe_addstr(preview_top - 1, width - len(scroll_text) - 5, 
+                           scroll_text, curses.color_pair(3))
+        
+        # Draw the visible portion of the body
+        for i in range(preview_height):
+            idx = self.list_body_scroll + i
+            if idx >= len(preview_lines):
+                break
+            # Truncate if line is too long
+            line = preview_lines[idx]
+            if len(line) > max_width:
+                line = line[:max_width-3] + "..."
+            self.safe_addstr(
+                preview_top + i,
+                4,
+                line,
+                curses.color_pair(3)
+            )
 
         # No notes message
         if not sorted_notes:
@@ -299,10 +382,11 @@ class QSNotes:
             if self.search_term:
                 msg = f"No notes found for '{self.search_term}'"
             msg_x = (width - len(msg)) // 2
-            self.stdscr.addstr(6, msg_x, msg, curses.color_pair(3))
+            self.safe_addstr(6, msg_x, msg, curses.color_pair(3))
+        
         if self.show_search:
             curses.curs_set(1)
-            self.stdscr.move(3, 12 + len(self.search_term))
+            self.stdscr.move(3, min(12 + len(self.search_term), width - 5))
         else:
             curses.curs_set(0)
             
@@ -312,9 +396,16 @@ class QSNotes:
     def draw_edit_view(self) -> None:
         self.stdscr.erase()
         height, width = self.stdscr.getmaxyx()
+        
+        # Ensure minimum terminal size
+        if height < 10 or width < 40:
+            self.safe_addstr(0, 0, "Terminal too small. Please resize.", curses.color_pair(6))
+            self.stdscr.noutrefresh()
+            curses.doupdate()
+            return
 
         # Layout constants
-        body_top = 7
+        body_top = 5
         body_bottom = height - 4
         max_body_lines = body_bottom - body_top
         max_line_width = width - 8
@@ -323,20 +414,12 @@ class QSNotes:
         self.draw_box(1, 2, height - 4, width - 4, " QNotes ", 3)
         self.draw_box(height - 3, 2, 3, width - 4, "", 5)
 
-        hints = "Tab:Switch Ctrl+W:Save Ctrl+O:Save&Exit Esc:Cancel&Back"
-        self.stdscr.addstr(height - 2, (width - len(hints)) // 2, hints, curses.color_pair(3))
+        hints = "Ctrl+W:Save  Ctrl+O:Save&Exit  Esc:Cancel&Back"
+        hints_x = (width - len(hints)) // 2
+        self.safe_addstr(height - 2, hints_x, hints, curses.color_pair(3))
 
-        # ----- TITLE -----
-        self.stdscr.addstr(3, 4, "Title:", curses.color_pair(1))
-
-        display_title = self.editing_title
-        if len(display_title) > max_line_width:
-            display_title = display_title[: max_line_width - 3] + "..."
-
-        self.stdscr.addstr(4, 4, display_title, curses.color_pair(2))
-
-        # ----- BODY -----
-        self.stdscr.addstr(6, 4, "Content:", curses.color_pair(1))
+        # ----- BODY (full note content) -----
+        self.safe_addstr(4, 4, "Note:", curses.color_pair(1))
         body_lines = self.editing_body.split("\n") or [""]
 
         # Build wrapped line map: [(orig_row, start_col)]
@@ -363,44 +446,38 @@ class QSNotes:
 
         for i, (row, col) in enumerate(visible):
             line = body_lines[row][col : col + max_line_width]
-            self.stdscr.addstr(body_top + i, 4, line, curses.color_pair(2))
-
-        # ----- ACTIVE FIELD INDICATOR -----
-        if self.current_field == "title":
-            self.stdscr.addch(3, 3, ">", curses.color_pair(1))
-        else:
-            self.stdscr.addch(6, 3, ">", curses.color_pair(1))
+            self.safe_addstr(body_top + i, 4, line, curses.color_pair(2))
 
         # ----- CURSOR POSITION -----
-        if self.current_field == "title":
-            cursor_y = 4
-            cursor_x = 4 + min(self.cursor_pos, max_line_width)
-        else:
-            # Find wrapped line index of cursor
-            wrapped_idx = 0
-            for i, (r, c) in enumerate(self.wrapped_line_map):
-                if r == self.body_cursor_row and self.body_cursor_col >= c:
-                    wrapped_idx = i
+        # Find wrapped line index of cursor
+        wrapped_idx = 0
+        for i, (r, c) in enumerate(self.wrapped_line_map):
+            if r == self.body_cursor_row and self.body_cursor_col >= c:
+                wrapped_idx = i
 
-            # Auto-scroll to keep cursor visible
-            if wrapped_idx < self.body_scroll:
-                self.body_scroll = wrapped_idx
-            elif wrapped_idx >= self.body_scroll + max_body_lines:
-                self.body_scroll = wrapped_idx - max_body_lines + 1
+        # Auto-scroll to keep cursor visible
+        if wrapped_idx < self.body_scroll:
+            self.body_scroll = wrapped_idx
+        elif wrapped_idx >= self.body_scroll + max_body_lines:
+            self.body_scroll = wrapped_idx - max_body_lines + 1
 
-            # Re-clamp
-            self.body_scroll = max(0, min(self.body_scroll, max_scroll))
+        # Re-clamp
+        self.body_scroll = max(0, min(self.body_scroll, max_scroll))
 
-            screen_row = wrapped_idx - self.body_scroll
-            start_col = self.wrapped_line_map[wrapped_idx][1]
+        screen_row = wrapped_idx - self.body_scroll
+        start_col = self.wrapped_line_map[wrapped_idx][1]
 
-            cursor_y = body_top + screen_row
-            cursor_x = 4 + min(
-                self.body_cursor_col - start_col, max_line_width - 1
-            )
+        cursor_y = body_top + screen_row
+        cursor_x = 4 + min(
+            self.body_cursor_col - start_col, max_line_width - 1
+        )
+
+        # Ensure cursor is within bounds
+        cursor_y = min(cursor_y, height - 5)
+        cursor_x = min(cursor_x, width - 5)
 
         curses.curs_set(1)
-        self.stdscr.move(cursor_y, min(cursor_x, width - 5))
+        self.stdscr.move(cursor_y, cursor_x)
         self.stdscr.noutrefresh()
         curses.doupdate()
 
@@ -414,12 +491,7 @@ class QSNotes:
 
     def check_save_key(self, key: int) -> bool:
         """Check if key is a save key combination. Returns True if save should occur."""
-        # Try multiple save key combinations
-        save_keys = [
-            23,    # Ctrl+W (ASCII 23)
-            #15,    # Ctrl+O (ASCII 15)
-        ]
-        
+        save_keys = [23]  # Ctrl+W (ASCII 23)
         return key in save_keys
     
     def handle_list_mode(self, key: int) -> bool:
@@ -433,14 +505,15 @@ class QSNotes:
                             self.selected_index = (self.selected_index - 1) % len(notes)
                         else:
                             self.selected_index = (self.selected_index + 1) % len(notes)
-                        self.preview_scroll = 0
+                        self.list_body_scroll = 0  # Reset scroll when changing notes
                         self.draw_list_view()
                     return True
+            
             if key in (curses.KEY_BACKSPACE, 127):
                 self.search_term = self.search_term[:-1]
                 notes = self.note_manager.search_notes(self.search_term)
                 self.clamp_selection(notes)
-                self.preview_scroll = 0
+                self.list_body_scroll = 0
                 self.draw_list_view()
 
             elif key == 27:  # Esc
@@ -454,49 +527,41 @@ class QSNotes:
                     note = sorted_notes[self.selected_index]
                     self.mode = "edit"
                     self.current_note_id = note.id
-                    self.editing_title = note.title
                     self.editing_body = note.body
 
-                    # Jump straight into body
-                    self.current_field = "body"
+                    # Set cursor at end of body
                     body_lines = self.editing_body.split("\n") or [""]
                     self.body_cursor_row = len(body_lines) - 1
                     self.body_cursor_col = len(body_lines[-1])
 
-                    # Title cursor is still valid if user tabs back
-                    self.cursor_pos = len(self.editing_title)
-
-                    # Reset body scroll so draw_edit_view can reposition it
+                    # Reset body scroll
                     self.body_scroll = 0
-                    self.last_selected_index = self.selected_index  # SAVE SELECTION
+                    self.last_selected_index = self.selected_index
                     self.draw_edit_view()
             elif 32 <= key <= 126:
                 self.search_term += chr(key)
                 notes = self.note_manager.search_notes(self.search_term)
-                self.selected_index = 0  # 👈 optional but feels great UX-wise
-                self.preview_scroll = 0
+                self.selected_index = 0
+                self.list_body_scroll = 0
                 self.draw_list_view()
 
             return True
-        #Handle keys in list mode. Returns True if should continue, False if quit.
+        
+        # Handle keys in list mode. Returns True if should continue, False if quit.
         if key == ord('q'):
             return False
         elif key == ord('n'):
             self.mode = "new"
             self.current_note_id = None
-            self.editing_title = datetime.now().strftime("%H:%M")
             self.editing_body = ""
-            self.current_field = "body"
-            self.cursor_pos = 0
             self.body_cursor_row = 0
             self.body_cursor_col = 0
             self.draw_edit_view()
-        
         elif key == ord('/'):
             self.show_search = True
             self.search_term = ""
             self.selected_index = 0
-            self.preview_scroll = 0
+            self.list_body_scroll = 0
             self.draw_list_view()
 
         elif key == 10:  # Enter
@@ -506,22 +571,18 @@ class QSNotes:
                 note = sorted_notes[self.selected_index]
                 self.mode = "edit"
                 self.current_note_id = note.id
-                self.editing_title = note.title
                 self.editing_body = note.body
 
-                # Jump straight into body
-                self.current_field = "body"
+                # Set cursor at end of body
                 body_lines = self.editing_body.split("\n") or [""]
                 self.body_cursor_row = len(body_lines) - 1
                 self.body_cursor_col = len(body_lines[-1])
 
-                # Title cursor is still valid if user tabs back
-                self.cursor_pos = len(self.editing_title)
-
-                # Reset body scroll so draw_edit_view can reposition it
+                # Reset body scroll
                 self.body_scroll = 0
-                self.last_selected_index = self.selected_index  # SAVE SELECTION
+                self.last_selected_index = self.selected_index
                 self.draw_edit_view()
+        
         elif key == ord('d'):
             notes = self.note_manager.search_notes(self.search_term)
             sorted_notes = self.get_sorted_notes()
@@ -531,21 +592,50 @@ class QSNotes:
                 if self.selected_index >= len(sorted_notes) - 1:
                     self.selected_index = max(0, len(sorted_notes) - 2)
                 self.draw_list_view()
-                self.preview_scroll = 0
+                self.list_body_scroll = 0
 
         elif key == curses.KEY_UP:
             notes = self.note_manager.search_notes(self.search_term)
             if notes:
                 self.selected_index = (self.selected_index - 1) % len(notes)
+                self.list_body_scroll = 0  # Reset scroll when changing notes
                 self.draw_list_view()
-                self.preview_scroll = 0
 
         elif key == curses.KEY_DOWN:
             notes = self.note_manager.search_notes(self.search_term)
             if notes:
                 self.selected_index = (self.selected_index + 1) % len(notes)
+                self.list_body_scroll = 0  # Reset scroll when changing notes
                 self.draw_list_view()
-                self.preview_scroll = 0
+
+        # Handle preview scrolling with j/k keys
+        elif key == ord('j') or key == ord('J'):
+            notes = self.note_manager.search_notes(self.search_term)
+            if notes and 0 <= self.selected_index < len(notes):
+                # Calculate max scroll for current note
+                note = notes[self.selected_index]
+                height, width = self.stdscr.getmaxyx()
+                max_width = width - 8
+                
+                # Count wrapped lines
+                preview_lines = []
+                for line in note.body.split("\n"):
+                    if line == "":
+                        preview_lines.append("")
+                    else:
+                        for i in range(0, len(line), max_width):
+                            preview_lines.append(line[i:i + max_width])
+                
+                preview_height = (height - 4) - (6 + self.LIST_VISIBLE_COUNT + 1)
+                max_scroll = max(0, len(preview_lines) - preview_height)
+                self.list_body_scroll = min(max_scroll, self.list_body_scroll + 1)
+                self.draw_list_view()
+
+        elif key == ord('k') or key == ord('K'):
+            notes = self.note_manager.search_notes(self.search_term)
+            if notes and 0 <= self.selected_index < len(notes):
+                self.list_body_scroll = max(0, self.list_body_scroll - 1)
+                self.draw_list_view()
 
         elif self.show_search:
             if key == curses.KEY_BACKSPACE or key == 127:
@@ -563,7 +653,7 @@ class QSNotes:
                 self.selected_index,
                 len(self.note_manager.notes) - 1
             )
-            self.preview_scroll = 0
+            self.list_body_scroll = 0
 
         return True
     
@@ -571,44 +661,34 @@ class QSNotes:
         # First check for control keys
         if key == 27:  # Escape - Cancel
             self.mode = "list"
-            # DON'T reset selected_index = 0, keep the last selection
             self.draw_list_view()
             return
 
         # Ctrl+O - Save and exit app
         if key == 15:  # Ctrl+O
-            if self.editing_title.strip() or self.editing_body.strip():
+            if self.editing_body.strip():
                 if self.current_note_id:
                     self.note_manager.update_note(
                         self.current_note_id,
-                        self.editing_title,
                         self.editing_body
                     )
                 else:
-                    self.note_manager.add_note(
-                        self.editing_title,
-                        self.editing_body
-                    )
-            curses.endwin()
-            raise SystemExit
+                    self.note_manager.add_note(self.editing_body)
+            # Cleanly exit curses and then exit
+            raise KeyboardInterrupt 
 
         # Check for save keys
         if self.check_save_key(key):
-            if self.editing_title.strip() or self.editing_body.strip():
+            if self.editing_body.strip():
                 if self.current_note_id:
                     # Update existing note - keep selection
                     self.note_manager.update_note(
                         self.current_note_id, 
-                        self.editing_title, 
                         self.editing_body
                     )
-                    # Keep the same selected_index (it points to the updated note)
                 else:
                     # Create new note - select the new note
-                    new_note = self.note_manager.add_note(
-                        self.editing_title, 
-                        self.editing_body
-                    )
+                    new_note = self.note_manager.add_note(self.editing_body)
 
                     # Find the index of the new note
                     notes = self.note_manager.search_notes(self.search_term)
@@ -621,47 +701,8 @@ class QSNotes:
             self.draw_list_view()
             return
 
-        if key == 9:  # Tab - switch between title and body
-            if self.current_field == "title":
-                self.current_field = "body"
-                # Initialize cursor position in body
-                body_lines = self.editing_body.split('\n')
-                if body_lines:
-                    self.body_cursor_row = len(body_lines)
-                    self.body_cursor_col = min(self.cursor_pos, len(body_lines[0]))
-                else:
-                    self.body_cursor_col = 0
-            else:
-                self.current_field = "title"
-                # Set cursor position based on where we were in body
-                self.cursor_pos = self.body_cursor_col
-            self.draw_edit_view()
-            return
-        
-        # Now handle text editing based on current field
-        if self.current_field == "title":
-            self.handle_title_input(key)
-        else:
-            self.handle_body_input(key)
-    
-    def handle_title_input(self, key: int):
-        if key == curses.KEY_BACKSPACE or key == 127:
-            if self.cursor_pos > 0:
-                self.editing_title = self.editing_title[:self.cursor_pos-1] + self.editing_title[self.cursor_pos:]
-                self.cursor_pos -= 1
-            self.draw_edit_view()
-        elif key == curses.KEY_LEFT:
-            if self.cursor_pos > 0:
-                self.cursor_pos -= 1
-            self.draw_edit_view()
-        elif key == curses.KEY_RIGHT:
-            if self.cursor_pos < len(self.editing_title):
-                self.cursor_pos += 1
-            self.draw_edit_view()
-        elif 32 <= key <= 126:
-            self.editing_title = self.editing_title[:self.cursor_pos] + chr(key) + self.editing_title[self.cursor_pos:]
-            self.cursor_pos += 1
-            self.draw_edit_view()
+        # Handle text editing in body
+        self.handle_body_input(key)
     
     def handle_body_input(self, key: int):
         body_lines = self.editing_body.split('\n')
@@ -796,30 +837,89 @@ class QSNotes:
             self.draw_edit_view()
     
     def run(self) -> None:
-        self.draw_list_view()
-        last_key = None
+        # Initial draw based on mode
+        try:
+            if self.mode == "list":
+                self.draw_list_view()
+            else:  # "new" or "edit"
+                self.draw_edit_view()
+        except curses.error:
+            # If we get an error on first draw, wait a bit and try again
+            time.sleep(0.2)
+            if self.mode == "list":
+                self.draw_list_view()
+            else:
+                self.draw_edit_view()
         
         while True:
             try:
                 key = self.stdscr.getch()
-                last_key = key
                 
                 if self.mode == "list":
                     if not self.handle_list_mode(key):
-                        break  # Quit if handle_list_mode returns False
+                        # Quit from list mode (q key)
+                        break
                 elif self.mode in ["edit", "new"]:
                     self.handle_edit_mode(key)
                         
             except KeyboardInterrupt:
                 break
+            except curses.error:
+                # If we get a curses error, just redraw
+                if self.mode == "list":
+                    self.draw_list_view()
+                else:
+                    self.draw_edit_view()
+    
+        return
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="QSNotes - Quick & Simple Notes TUI")
+    parser.add_argument('-n', '--new', action='store_true', 
+                       help='Start in new note mode')
+    parser.add_argument('-b', '--body', type=str, default='',
+                       help='Pre-fill note body with text')
+    parser.add_argument('-q', '--quick', type=str, metavar='TEXT',
+                       help='Quick note: create a new note with the given text and exit')
+    parser.add_argument('-p', '--pipe', action='store_true',
+                       help='Read note content from stdin')
+    return parser.parse_args()
 
 def main(stdscr):
     """Main entry point for curses"""
-    app = QSNotes(stdscr)
+    args = parse_arguments()
+    
+    # Handle piped input
+    if args.pipe and not sys.stdin.isatty():
+        content = sys.stdin.read().strip()
+        note_manager = NoteManager()
+        note_manager.add_note(content)
+        print(f"Note added from pipe: {content[:50]}...")
+        return
+    
+    # Handle quick note mode (create and exit immediately)
+    if args.quick:
+        # Initialize note manager (no curses needed)
+        note_manager = NoteManager()
+        note_manager.add_note(args.quick)
+        print(f"Quick note added: {args.quick[:50]}...")
+        return
+    
+    # Determine initial mode
+    initial_mode = "new" if args.new else "list"
+    initial_body = args.body if args.body else ""
+    
+    # Start the TUI with the specified mode
+    app = QSNotes(stdscr, initial_mode, initial_body)
     app.run()
 
-
 if __name__ == "__main__":
-    # Run the curses application
-    curses.wrapper(main)
+    # Parse arguments first
+    args = parse_arguments()
+    
+    # If it's a quick note, run without curses
+    if args.quick:
+        main(None)
+    else:
+        # Run the curses application normally
+        curses.wrapper(main)
