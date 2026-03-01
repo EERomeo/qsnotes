@@ -165,6 +165,7 @@ Notes are stored locally in `notes.json` (created automatically).
 | `/` | Search notes |
 | `q` | Quit |
 | `j/k` | Scroll body |
+| `s` | Change sort order |
 
 ### Search Mode
 
@@ -224,14 +225,6 @@ qsnotes.py      # Main application
 notes.json     # Notes storage (auto‑generated)
 README.md
 ```
-
----
-
-## 🔧 Customizing
-
-You can change some of the behaviour to better suit your workflow.
-Here are some hints:
-- On line 202 you can change the sorting behaviour as well as what the sorting works on. Changing x.id to x.created_at or x.updated_at will sort on the creation or last updated date. Change reverse=True to reverse=False to sort ascending or descending. Default sort is on note id.
 
 ---
 
