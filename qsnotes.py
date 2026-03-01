@@ -154,6 +154,7 @@ class QSNotes:
         self.current_note_id: Optional[int] = None
         self.search_term = ""
         self.selected_index = 0
+        self.sort_desc = True
         self.last_selected_index = 0  # track last selection
         self.mode = initial_mode  # "list", "edit", or "new"
         self.editing_body = initial_body  # Pre-fill body if provided
@@ -199,7 +200,7 @@ class QSNotes:
     
     def get_sorted_notes(self):
         notes = self.note_manager.search_notes(self.search_term)
-        return sorted(notes, key=lambda x: x.id, reverse=True)
+        return sorted(notes, key=lambda x: x.updated_at, reverse=self.sort_desc)
 
     def draw_box(self, y: int, x: int, height: int, width: int, title: str = "", color_pair: int = 0) -> None:
         # Safety check - don't draw if coordinates are out of bounds
@@ -497,8 +498,7 @@ class QSNotes:
     def handle_list_mode(self, key: int) -> bool:
         if self.show_search:
             if self.show_search:
-                notes = self.note_manager.search_notes(self.search_term)
-
+                notes = self.get_sorted_notes()
                 if key in (curses.KEY_UP, curses.KEY_DOWN):
                     if notes:
                         if key == curses.KEY_UP:
@@ -511,7 +511,7 @@ class QSNotes:
             
             if key in (curses.KEY_BACKSPACE, 127):
                 self.search_term = self.search_term[:-1]
-                notes = self.note_manager.search_notes(self.search_term)
+                notes = self.get_sorted_notes()
                 self.clamp_selection(notes)
                 self.list_body_scroll = 0
                 self.draw_list_view()
@@ -521,7 +521,7 @@ class QSNotes:
                 self.search_term = ""
                 self.draw_list_view()
             elif key == 10:  # Enter
-                notes = self.note_manager.search_notes(self.search_term)
+                notes = self.get_sorted_notes()
                 sorted_notes = self.get_sorted_notes()
                 if 0 <= self.selected_index < len(sorted_notes):
                     note = sorted_notes[self.selected_index]
@@ -540,7 +540,7 @@ class QSNotes:
                     self.draw_edit_view()
             elif 32 <= key <= 126:
                 self.search_term += chr(key)
-                notes = self.note_manager.search_notes(self.search_term)
+                notes = self.get_sorted_notes()
                 self.selected_index = 0
                 self.list_body_scroll = 0
                 self.draw_list_view()
@@ -563,9 +563,13 @@ class QSNotes:
             self.selected_index = 0
             self.list_body_scroll = 0
             self.draw_list_view()
-
+        elif key == ord('s'):
+            self.sort_desc = not self.sort_desc
+            self.selected_index = 0
+            self.list_body_scroll = 0
+            self.draw_list_view()
         elif key == 10:  # Enter
-            notes = self.note_manager.search_notes(self.search_term)
+            notes = self.get_sorted_notes()
             sorted_notes = self.get_sorted_notes()
             if 0 <= self.selected_index < len(sorted_notes):
                 note = sorted_notes[self.selected_index]
@@ -584,7 +588,7 @@ class QSNotes:
                 self.draw_edit_view()
         
         elif key == ord('d'):
-            notes = self.note_manager.search_notes(self.search_term)
+            notes = self.get_sorted_notes()
             sorted_notes = self.get_sorted_notes()
             if 0 <= self.selected_index < len(sorted_notes):
                 note = sorted_notes[self.selected_index]
@@ -595,14 +599,14 @@ class QSNotes:
                 self.list_body_scroll = 0
 
         elif key == curses.KEY_UP:
-            notes = self.note_manager.search_notes(self.search_term)
+            notes = self.get_sorted_notes()
             if notes:
                 self.selected_index = (self.selected_index - 1) % len(notes)
                 self.list_body_scroll = 0  # Reset scroll when changing notes
                 self.draw_list_view()
 
         elif key == curses.KEY_DOWN:
-            notes = self.note_manager.search_notes(self.search_term)
+            notes = self.get_sorted_notes()
             if notes:
                 self.selected_index = (self.selected_index + 1) % len(notes)
                 self.list_body_scroll = 0  # Reset scroll when changing notes
@@ -610,7 +614,7 @@ class QSNotes:
 
         # Handle preview scrolling with j/k keys
         elif key == ord('j') or key == ord('J'):
-            notes = self.note_manager.search_notes(self.search_term)
+            notes = self.get_sorted_notes()
             if notes and 0 <= self.selected_index < len(notes):
                 # Calculate max scroll for current note
                 note = notes[self.selected_index]
@@ -632,7 +636,7 @@ class QSNotes:
                 self.draw_list_view()
 
         elif key == ord('k') or key == ord('K'):
-            notes = self.note_manager.search_notes(self.search_term)
+            notes = self.get_sorted_notes()
             if notes and 0 <= self.selected_index < len(notes):
                 self.list_body_scroll = max(0, self.list_body_scroll - 1)
                 self.draw_list_view()
@@ -691,8 +695,8 @@ class QSNotes:
                     new_note = self.note_manager.add_note(self.editing_body)
 
                     # Find the index of the new note
-                    notes = self.note_manager.search_notes(self.search_term)
-                    sorted_notes = sorted(notes, key=lambda x: x.id)
+                    notes = self.get_sorted_notes()
+                    sorted_notes = self.get_sorted_notes()
                     for i, note in enumerate(sorted_notes):
                         if note.id == new_note.id:
                             self.selected_index = i
