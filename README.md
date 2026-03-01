@@ -70,7 +70,7 @@ qn() {
         "$NOTES_SCRIPT" --new
     else
         # With arguments - create quick note
-        "$NOTES_SCRIPT" --quick "$*" && echo "QN OK"
+        "$NOTES_SCRIPT" --quick "$*"
     fi
 }
 ```
