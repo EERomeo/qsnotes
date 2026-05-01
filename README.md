@@ -6,6 +6,7 @@ QSNotes is designed to feel like a minimal and light TUI: terminal colors, keybo
 
 <img width="600" height="600" alt="image" src="https://github.com/user-attachments/assets/2dbd0fc9-9b17-420c-bca3-9dceadafa3ca" />
 
+
 <img width="600" height="600" alt="image" src="https://github.com/user-attachments/assets/3c06bc17-ee6f-4a97-b4a4-0f900548f6f3" />
 
 ---
